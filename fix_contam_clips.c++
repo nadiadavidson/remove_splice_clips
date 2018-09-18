@@ -39,9 +39,12 @@ SeqLib::Cigar fix_cigar( SeqLib::Cigar& cigar){
 
 int main(int argc, char *argv[]){
 
+  if(argc!=3){
+    cout << "Usage: fix_contam_clips <in.bam> <out.bam>" << endl;
+    exit(1);
+  }
   std::string in_filename=argv[1];
   std::string out_filename=argv[2];
-  std::string bwa_index=argv[3];
 
   //Bam file reader
   SeqLib::BamReader bw;
@@ -81,8 +84,8 @@ int main(int argc, char *argv[]){
   writer.WriteHeader();
 
   //open BWA Wrapper
-  SeqLib::BWAWrapper bwa;
-  bwa.LoadIndex(bwa_index); 
+  //SeqLib::BWAWrapper bwa;
+  //bwa.LoadIndex(bwa_index); 
 
   //Bam file reader again
   SeqLib::BamReader bw2;
