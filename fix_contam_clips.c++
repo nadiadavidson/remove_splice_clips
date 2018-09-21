@@ -104,6 +104,7 @@ int main(int argc, char *argv[]){
 	SeqLib::Cigar new_cigar;
 	if(!read.ReverseFlag()){
 	  new_cigar = fix_cigar(cigar);
+	  read.SetPosition(read.Position()-start);
 	} else {
 	  reverse(cigar.begin(),cigar.end());
 	  new_cigar=fix_cigar(cigar);
