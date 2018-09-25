@@ -12,6 +12,7 @@
 using namespace std;
 
 static const int THREADS=8;
+static const int MIN_TRANS_MAP_SC_LENGTH=12;
 
 int main(int argc, char *argv[]){
 
@@ -38,13 +39,13 @@ int main(int argc, char *argv[]){
 
   while(bw.GetNextRecord(read)){
     bool keep_read=true;
-    if((read.NumSoftClip())>0){
+    if(read.NumSoftClip()>MIN_TRANS_MAP_SC_LENGTH){
       SeqLib::BamRecordVector results;
       bwa.AlignSequence(read.Sequence(), read.Qname(), results,false,1.0,0);
       //cout << "Soft clipped:"<< r.NumSoftClip() << " "; 
       for(int a=0; a< results.size(); a++){
        	//cout << "Realigned: " << results[a].NumSoftClip() << " , " ;
-	if(results[a].NumSoftClip()==0) keep_read=false; //remove is alignment without softclip found
+	if(results[a].NumSoftClip()<MIN_TRANS_MAP_SC_LENGTH) keep_read=false; //remove is alignment without softclip found
       }
     }
     if(keep_read) writer.WriteRecord(read);
