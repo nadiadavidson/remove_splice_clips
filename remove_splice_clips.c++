@@ -39,7 +39,7 @@ int main(int argc, char *argv[]){
 
   while(bw.GetNextRecord(read)){
     bool keep_read=true;
-    if(read.NumSoftClip()>MIN_TRANS_MAP_SC_LENGTH){
+    if(read.NumSoftClip()>=MIN_TRANS_MAP_SC_LENGTH){
       SeqLib::BamRecordVector results;
       bwa.AlignSequence(read.Sequence(), read.Qname(), results,false,1.0,0);
       //cout << "Soft clipped:"<< r.NumSoftClip() << " "; 
