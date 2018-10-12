@@ -14,7 +14,7 @@ using namespace std;
 //static const char SOFT_CLIP_TAG='S';
 static const int MAX_CLIP_LENGTH=150;
 static const int CONTAM_SAMPLE_SIZE=50000;
-static const int THREADS=8;
+//static const int THREADS=8;
 
 int check_contam(vector<int> clip_table){
   int max=*max_element(clip_table.begin()+1,clip_table.end());
@@ -79,8 +79,8 @@ int main(int argc, char *argv[]){
   SeqLib::BamWriter writer; // or writer(SeqLib::SAM) or writer(SeqLib::CRAM) 
   writer.SetHeader(bw.Header());
   writer.Open(out_filename);
-  SeqLib::ThreadPool t(THREADS);
-  writer.SetThreadPool(t);
+  //  SeqLib::ThreadPool t(THREADS);
+  //  writer.SetThreadPool(t);
   writer.WriteHeader();
 
   //open BWA Wrapper

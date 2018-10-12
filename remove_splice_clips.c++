@@ -11,7 +11,7 @@
 #include <SeqLib/BWAWrapper.h>
 using namespace std;
 
-static const int THREADS=8;
+//static const int THREADS=8;
 static const int MIN_TRANS_MAP_SC_LENGTH=12;
 
 int main(int argc, char *argv[]){
@@ -29,8 +29,8 @@ int main(int argc, char *argv[]){
   SeqLib::BamWriter writer; // or writer(SeqLib::SAM) or writer(SeqLib::CRAM) 
   writer.SetHeader(bw.Header());
   writer.Open(out_filename);
-  SeqLib::ThreadPool t(THREADS);
-  writer.SetThreadPool(t);
+  //SeqLib::ThreadPool t(THREADS);
+  //writer.SetThreadPool(t);
   writer.WriteHeader();
 
   //open BWA Wrapper
