@@ -97,7 +97,7 @@ int main(int argc, char *argv[]){
   while(bw.GetNextRecord(r)){
     nread++;
     if( nread % 100000 == 0 ) cerr << nread << endl;
-    if((r.Length()-r.NumAlignedBases())<30 && (r.MaxInsertionBases()==0)) continue;
+    if((r.Length()-r.NumAlignedBases())<30 && (r.PositionEnd() - r.Position()) < 100000) continue;
     nread_processed++;
     string seq=r.Sequence();
     //loop through the sequence to find the first match
@@ -112,15 +112,17 @@ int main(int argc, char *argv[]){
     //find all matches
   }
   cerr << "Junction counts=" << f_count << "   " << r_count << endl;
-  cerr << "Reads=" << nread << endl;
+  cerr << "Reads Total=" << nread << endl;
   cerr << "Reads Processed=" << nread_processed << endl;
 
   //print out the table of counts
   map< pair<string,string > , int >::iterator counts_itr=counts.begin();
   for(;counts_itr!=counts.end(); counts_itr++){
-    cout << counts_itr->first.first << "\t"
-	 << counts_itr->first.second << "\t"
-	 << counts_itr->second << endl;
+    if(counts_itr->second>1){
+      cout << counts_itr->first.first << "\t"
+	   << counts_itr->first.second << "\t"
+	   << counts_itr->second << endl;
+    }
   }
   bw.Close();
 }
