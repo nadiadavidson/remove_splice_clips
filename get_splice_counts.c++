@@ -6,6 +6,7 @@
 #include <iostream>
 #include <numeric>  
 #include <fstream>
+#include <unordered_map>
 
 #include <SeqLib/BamReader.h>
 #include <SeqLib/GenomicRegionCollection.h>
@@ -16,7 +17,7 @@
 using namespace std;
 
 //code taken from stackoverflow
-char compliment(char c){
+/**char compliment(char c){
   switch(c){
   case 'A' : return 'T';
   case 'T' : return 'A';
@@ -24,21 +25,25 @@ char compliment(char c){
   case 'C' : return 'G';
   default: return 'N';
   }
-}
+  }**/
+
+static const int FLANK_SIZE=30;
+static const int MIN_GAP=200000;
 
 //loop through the sequence to find a match
-bool get_match(string & seq, map<string,string> & junc_seq, map< pair<string,string > , int > & counts ){
-  if(seq.size()<60) return false;
-  for(int pos=0; pos < (seq.size()-30) ; pos++){
-    string k_mer=seq.substr(pos,30);
-    map<string,string>::iterator match=junc_seq.find(k_mer);
+bool get_match(string & seq, unordered_map<string,string> & junc_seq, unordered_map< string, int > & counts ){
+  if(seq.size()<(2*FLANK_SIZE)) return false;
+  for(int pos=0; pos < (seq.size()-FLANK_SIZE) ; pos++){
+    string k_mer=seq.substr(pos,FLANK_SIZE);
+    unordered_map<string,string>::iterator match=junc_seq.find(k_mer);
     //a match is found. look for other side of the junction
     if(match!=junc_seq.end()){
-      string k_mer2=seq.substr(pos+30,30);
-      map<string,string>::iterator match2=junc_seq.find(k_mer2);
+      string k_mer2=seq.substr(pos+FLANK_SIZE,FLANK_SIZE);
+      unordered_map<string,string>::iterator match2=junc_seq.find(k_mer2);
       //other end if found
       if(match2!=junc_seq.end()){
-	counts[make_pair(match->second,match2->second)]++;
+	string pair=match->second + "\t" + match2->second;
+	counts[pair]++;
 	//	cout << "Found pair: " << match->second << "   " << match2->second << endl;
 	return true;
       }
@@ -72,7 +77,7 @@ int main(int argc, char *argv[]){
     exit(1);
   }
   SeqLib::UnalignedSequence s;
-  map<string,string> junc_seq;
+  unordered_map<string,string> junc_seq;
   vector<string> to_erase; //list of junction sequences that aren't unique.
   while(fr.GetNextSequence(s)){
     //if more than one junction with this sequence
@@ -93,21 +98,24 @@ int main(int argc, char *argv[]){
   int nread_processed=0;
   int f_count=0;
   int r_count=0;
-  map< pair<string,string > , int > counts;
+  unordered_map< string , int > counts;
   while(bw.GetNextRecord(r)){
     nread++;
     if( nread % 100000 == 0 ) cerr << nread << endl;
-    if((r.Length()-r.NumAlignedBases())<30 && (r.PositionEnd() - r.Position()) < 100000) continue;
+    if((r.Length()-r.NumAlignedBases())<FLANK_SIZE && (r.PositionEnd() - r.Position()) < MIN_GAP) continue;
     nread_processed++;
     string seq=r.Sequence();
     //loop through the sequence to find the first match
     if(get_match(seq,junc_seq,counts)){ 
       f_count++;
-    } else {
+      //no need to reverse compliment because the bam sequence has already been done.
+      /**   } else {
       reverse(seq.begin(),seq.end());
       transform(seq.begin(),seq.end(),seq.begin(),compliment);
-      if(get_match(seq,junc_seq,counts))
+      if(get_match(seq,junc_seq,counts)){
+	cout << "Break found reverse - " << r.ReverseFlag() << endl;
 	r_count++;
+	}**/
     }
     //find all matches
   }
@@ -116,14 +124,12 @@ int main(int argc, char *argv[]){
   cerr << "Reads Processed=" << nread_processed << endl;
 
   //print out the table of counts
-  map< pair<string,string > , int >::iterator counts_itr=counts.begin();
+  unordered_map< string , int >::iterator counts_itr=counts.begin();
   for(;counts_itr!=counts.end(); counts_itr++){
     if(counts_itr->second>1){
-      cout << counts_itr->first.first << "\t"
-	   << counts_itr->first.second << "\t"
+      cout << counts_itr->first << "\t"
 	   << counts_itr->second << endl;
     }
   }
   bw.Close();
 }
-
