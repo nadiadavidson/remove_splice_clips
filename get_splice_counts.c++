@@ -20,7 +20,7 @@ static const int FLANK_SIZE=30;
 static const int MIN_GAP=200000;
 static const string END_LABEL="END";
 static const string START_LABEL="START";
-static const string EXON_ID_DELIM=":";
+static const char EXON_ID_DELIM=':';
 
 static int n_first_match=0;
 static int n_perfect_match=0;
@@ -40,18 +40,45 @@ char compliment(char& c){
 static class Counts {
   unordered_map< string, int > _counts;
   const int MIN=1;
- public:
+  bool print_if_interesting_junction(string name, int & read_support){
+    //get positions and genes from the exon junction ids
+    stringstream ss(name);    
+    string field;
+    vector<string> gene_info;
+    while(getline(ss,field, EXON_ID_DELIM)) {
+      gene_info.push_back(field);
+    } //in case the format looks wrong.
+    if(gene_info.size()!=8){
+      cerr << "Issue with exon sequence IDs." 
+	   << "Format should be Gene:Chrom:Start:END/START" << endl;
+      exit(1);
+    }
+
+    //otherwise fill in the gene info
+    vector<string> gene{gene_info.at(0),gene_info.at(4)};
+    vector<string> chrom{gene_info.at(1),gene_info.at(5)};
+    vector<int>pos{atoi(gene_info.at(2).c_str()),atoi(gene_info.at(6).c_str())};
+    
+    //now check if the junction looks interesting
+    bool different_chrom = chrom[0]!=chrom[1];
+    bool non_linear_order = pos[1] < pos[0];
+    bool distal = (pos[1]-pos[0])>MIN_GAP & (gene[0]!=gene[1]);
+    if(different_chrom | non_linear_order | distal){
+      cout << gene[0] << "\t" << chrom[0] << "\t" << pos[0] << "\t" 
+	   << gene[1] << "\t" << chrom[1] << "\t" << pos[1] << "\t" 
+	   << read_support << endl;
+    }
+  };
+  
+public:
   void increment(string& end,string& start){
-    string pair = end + "\t" + start;
+    string pair = end + EXON_ID_DELIM + start;
     _counts[pair]++;
   };
   void print_table(){
     unordered_map< string , int >::iterator counts_itr=_counts.begin();
     for(;counts_itr!=_counts.end(); counts_itr++){
-      if(counts_itr->second>MIN){
-	cout << counts_itr->first << "\t"
-	     << counts_itr->second << endl;
-      }
+      print_if_interesting_junction(counts_itr->first,counts_itr->second);
     }
   };
 
