@@ -224,14 +224,13 @@ int main(int argc, char *argv[]){
     //loop through the sequence to find the first match
     if(get_match(seq)){ 
       f_count++;
-      //no need to reverse compliment because the bam sequence has already been done.
-      /**   } else {
+      //also check the reverse compliment if the read is unmapped.
+    } else if (!r.MappedFlag())  {
       reverse(seq.begin(),seq.end());
       transform(seq.begin(),seq.end(),seq.begin(),compliment);
-      if(get_match(seq,junc_seq,counts)){
-	cout << "Break found reverse - " << r.ReverseFlag() << endl;
+      if(get_match(seq)){
 	r_count++;
-	}**/
+      }
     }
     //find all matches
   }
