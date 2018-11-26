@@ -14,6 +14,8 @@
 #include <SeqLib/FastqReader.h>
 #include <SeqLib/UnalignedSequence.h>
 
+#include <gperftools/profiler.h>
+
 using namespace std;
 
 static const int FLANK_SIZE=30;
@@ -198,7 +200,9 @@ int main(int argc, char *argv[]){
   cerr << "Reading fasta file of junction sequences: " << flank_fasta << endl;
   junc_seq_start.read_fasta(flank_fasta,START_LABEL);
   junc_seq_end.read_fasta(flank_fasta,END_LABEL);
-  
+
+  ProfilerStart("prof.out");
+
   //Bam file reader
   SeqLib::BamReader bw;
   if(!bw.Open(in_filename)){
@@ -235,6 +239,8 @@ int main(int argc, char *argv[]){
     //find all matches
   }
   bw.Close();
+
+  ProfilerStop();
 
   cerr << "Reads Total=" << nread << endl;
   cerr << "Reads Processed=" << nread_processed << endl;
