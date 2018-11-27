@@ -14,15 +14,17 @@
 #include <SeqLib/FastqReader.h>
 #include <SeqLib/UnalignedSequence.h>
 
-#include <gperftools/profiler.h>
+//#include <gperftools/profiler.h>
 
 using namespace std;
 
 static const int FLANK_SIZE=30;
+static const bool ALLOW_MISMATCH=false;
 static const int MIN_GAP=200000;
 static const string END_LABEL="END";
 static const string START_LABEL="START";
 static const char EXON_ID_DELIM=':';
+static const int MIN_COUNTS=2;
 
 static int n_first_match=0;
 static int n_perfect_match=0;
@@ -41,8 +43,7 @@ char compliment(char& c){
 
 static class Counts {
   unordered_map< string, int > _counts;
-  const int MIN=1;
-  bool print_if_interesting_junction(string name, int & read_support){
+  void print_if_interesting_junction(string name, int & read_support){
     //get positions and genes from the exon junction ids
     stringstream ss(name);    
     string field;
@@ -60,14 +61,17 @@ static class Counts {
     vector<string> gene{gene_info.at(0),gene_info.at(4)};
     vector<string> chrom{gene_info.at(1),gene_info.at(5)};
     vector<int>pos{atoi(gene_info.at(2).c_str()),atoi(gene_info.at(6).c_str())};
+    vector<string>type{gene_info.at(3),gene_info.at(7)};
     
     //now check if the junction looks interesting
     bool different_chrom = chrom[0]!=chrom[1];
     bool non_linear_order = pos[1] < pos[0];
-    bool distal = (pos[1]-pos[0])>MIN_GAP & (gene[0]!=gene[1]);
-    if(different_chrom | non_linear_order | distal){
+    bool distal = ((pos[1]-pos[0])>MIN_GAP) & (gene[0]!=gene[1]);
+    bool enough_support = read_support >= MIN_COUNTS;
+    if( (different_chrom | non_linear_order | distal ) & enough_support ){
       cout << gene[0] << "\t" << chrom[0] << "\t" << pos[0] << "\t" 
 	   << gene[1] << "\t" << chrom[1] << "\t" << pos[1] << "\t" 
+	   << type[0] << "\t" << type[1] << "\t" 
 	   << read_support << endl;
     }
   };
@@ -102,9 +106,11 @@ public:
       //will need to remove later.
       bool is_type = s.Name.find(type,s.Name.size()-type.size()-1)!=string::npos; //at the end?
       bool right_size = s.Seq.size()==FLANK_SIZE;
-      if(is_type & right_size & (junc_seq.find(s.Seq)!=junc_seq.end()))
-	to_erase.push_back(s.Seq);
-      junc_seq[s.Seq]=s.Name;
+      if(is_type & right_size){
+	if(junc_seq.find(s.Seq)!=junc_seq.end())
+	  to_erase.push_back(s.Seq);
+	junc_seq[s.Seq]=s.Name;
+      }
     }
     if(junc_seq.size()==0){
       cerr << "Found no compatible sequences in "<< flank_fasta << endl;
@@ -164,24 +170,28 @@ bool get_match(string & seq){
 	return true;
       }
       //start not found. Try permutating the bases to account for 1 mismatch
-      start=find_non_exact_match(kmer2,junc_seq_start);
-      if(start!=junc_seq_start.end()){
-	counts.increment(end->second,start->second);
-	return true;
+      if(ALLOW_MISMATCH){
+	start=find_non_exact_match(kmer2,junc_seq_start);
+	if(start!=junc_seq_start.end()){
+	  counts.increment(end->second,start->second);
+	  return true;
+	}
       }
     }
   }
-  //check again in reverse, permutating the end bases:
-  for(int pos=seq.size()-FLANK_SIZE-1; pos >= FLANK_SIZE ; pos--){
-    string kmer1=seq.substr(pos,FLANK_SIZE);
-    start=junc_seq_start.find(kmer1);
-    //if a match is found. look for other side of the junction
-    if(start!=junc_seq_start.end()){
-      string kmer2=seq.substr(pos-FLANK_SIZE,FLANK_SIZE);
-      end=find_non_exact_match(kmer2,junc_seq_end);
-      if(end!=junc_seq_end.end()){
-	counts.increment(end->second,start->second);
-	return true;
+  if(ALLOW_MISMATCH){
+    //check again in reverse, permutating the end bases:
+    for(int pos=seq.size()-FLANK_SIZE-1; pos >= FLANK_SIZE ; pos--){
+      string kmer1=seq.substr(pos,FLANK_SIZE);
+      start=junc_seq_start.find(kmer1);
+      //if a match is found. look for other side of the junction
+      if(start!=junc_seq_start.end()){
+	string kmer2=seq.substr(pos-FLANK_SIZE,FLANK_SIZE);
+	end=find_non_exact_match(kmer2,junc_seq_end);
+	if(end!=junc_seq_end.end()){
+	  counts.increment(end->second,start->second);
+	  return true;
+	}
       }
     }
   }
@@ -201,7 +211,7 @@ int main(int argc, char *argv[]){
   junc_seq_start.read_fasta(flank_fasta,START_LABEL);
   junc_seq_end.read_fasta(flank_fasta,END_LABEL);
 
-  ProfilerStart("prof.out");
+  //  ProfilerStart("prof.out");
 
   //Bam file reader
   SeqLib::BamReader bw;
@@ -240,7 +250,7 @@ int main(int argc, char *argv[]){
   }
   bw.Close();
 
-  ProfilerStop();
+  //  ProfilerStop();
 
   cerr << "Reads Total=" << nread << endl;
   cerr << "Reads Processed=" << nread_processed << endl;
