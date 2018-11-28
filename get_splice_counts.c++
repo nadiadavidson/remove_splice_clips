@@ -4,18 +4,17 @@
  **/ 
 
 #include <iostream>
-#include <numeric>  
 #include <fstream>
 #include <unordered_map>
+#include <vector>
+#include <sstream>
+#include <string>
+#include <algorithm>
 
-#include <SeqLib/BamReader.h>
-#include <SeqLib/GenomicRegionCollection.h>
-#include <SeqLib/GenomicRegion.h>
-#include <SeqLib/FastqReader.h>
-#include <SeqLib/UnalignedSequence.h>
+#include <sam.h>
+#include <bam.h>
 
-//#include <gperftools/profiler.h>
-
+#include <gperftools/profiler.h>
 using namespace std;
 
 static const int FLANK_SIZE=30;
@@ -61,7 +60,6 @@ static class Counts {
     vector<string> gene{gene_info.at(0),gene_info.at(4)};
     vector<string> chrom{gene_info.at(1),gene_info.at(5)};
     vector<int>pos{atoi(gene_info.at(2).c_str()),atoi(gene_info.at(6).c_str())};
-    vector<string>type{gene_info.at(3),gene_info.at(7)};
     
     //now check if the junction looks interesting
     bool different_chrom = chrom[0]!=chrom[1];
@@ -71,7 +69,6 @@ static class Counts {
     if( (different_chrom | non_linear_order | distal ) & enough_support ){
       cout << gene[0] << "\t" << chrom[0] << "\t" << pos[0] << "\t" 
 	   << gene[1] << "\t" << chrom[1] << "\t" << pos[1] << "\t" 
-	   << type[0] << "\t" << type[1] << "\t" 
 	   << read_support << endl;
     }
   };
@@ -91,25 +88,43 @@ public:
 } counts;
 
 class JunctionSeq { //read the fasta
-  unordered_map<string,string> junc_seq;
+  unordered_map<string,string > junc_seq;
 public:
   void read_fasta( string & flank_fasta,const string type){
-    SeqLib::FastqReader fr;
-    if(!fr.Open(flank_fasta)){
-      cerr << "Trouble opening "<<flank_fasta << endl; 
+    ifstream file;
+    file.open(flank_fasta);
+    if(!(file.good())){
+      cout << "Unable to open file " << flank_fasta << endl;
       exit(1);
+    } //read the fasta files
+    unordered_map<string,string> sequences;
+    string id="";
+    string line;
+    while ( getline (file,line) ){
+      int start=line.find(">")+1;
+      if(start==1){ //if this is the ID line...
+        int end=line.find_first_of("\t\n ")-1;
+	id=line.substr(start,end);
+      } else {
+        sequences[id]=sequences[id]+line;
+      }
     }
-    SeqLib::UnalignedSequence s;
+    //loop through the sequences and sort into start and end flanking sequence
+    //mark any duplicate sequences for later removal
     vector<string> to_erase; //list of junction sequences that aren't unique.
-    while(fr.GetNextSequence(s)){
+    unordered_map<string,string>::iterator seq_itr=sequences.begin();
+    for(; seq_itr!=sequences.end(); seq_itr++){
       //if more than one junction with this sequence
       //will need to remove later.
-      bool is_type = s.Name.find(type,s.Name.size()-type.size()-1)!=string::npos; //at the end?
-      bool right_size = s.Seq.size()==FLANK_SIZE;
+      string id=seq_itr->first;
+      string seq=seq_itr->second;
+      int second_last_char=id.size()-type.size()-1;
+      bool is_type = id.find(type,second_last_char)!=string::npos;
+      bool right_size = seq.size()==FLANK_SIZE;
       if(is_type & right_size){
-	if(junc_seq.find(s.Seq)!=junc_seq.end())
-	  to_erase.push_back(s.Seq);
-	junc_seq[s.Seq]=s.Name;
+	if(junc_seq.find(seq)!=junc_seq.end())
+	  to_erase.push_back(seq);
+	junc_seq[seq]=id;
       }
     }
     if(junc_seq.size()==0){
@@ -153,9 +168,10 @@ bool get_match(string & seq){
   if(seq.size()<(2*FLANK_SIZE)) return false;
   unordered_map<string,string>::iterator end; //end of exon1
   unordered_map<string,string>::iterator start; //joins to start of exon2
+  string kmer1,kmer2;
   //search in the forward direction
   for(int pos=0; pos < (seq.size()-FLANK_SIZE) ; pos++){
-    string kmer1=seq.substr(pos,FLANK_SIZE);
+    kmer1=seq.substr(pos,FLANK_SIZE);
     end=junc_seq_end.find(kmer1);
     //if a match is found. look for other side of the junction
     if(end!=junc_seq_end.end()){
@@ -211,35 +227,53 @@ int main(int argc, char *argv[]){
   junc_seq_start.read_fasta(flank_fasta,START_LABEL);
   junc_seq_end.read_fasta(flank_fasta,END_LABEL);
 
-  //  ProfilerStart("prof.out");
+  ProfilerStart("prof.out");
 
   //Bam file reader
-  SeqLib::BamReader bw;
-  if(!bw.Open(in_filename)){
-    cerr << "Trouble opening "<< in_filename << endl;
+  samfile_t *in = 0 ;
+  if ((in = samopen(in_filename.c_str(), "br", NULL)) == 0 | in->header == 0) {
+    cerr << "fail to open "<< in_filename << " for reading." << endl;
     exit(1);
   }
-  SeqLib::BamRecord r;
-  //loop through bam records
-  cerr << "Reading bam file:" << in_filename << endl;
-  int nread=0;
+  bam1_t *b = bam_init1();
+  int r;
+  int i=0;
   int nread_processed=0;
   int f_count=0;
   int r_count=0;
-  while(bw.GetNextRecord(r)){
+  int nread=0;
+  int unmapped=0;
+  while ((r = samread(in, b)) >= 0) {
     nread++;
-    if( nread % 100000 == 0 ) cerr << nread << endl;
-    if((r.Length()-r.NumAlignedBases())<FLANK_SIZE && (r.PositionEnd() - r.Position()) < MIN_GAP){
-      //      cout << r.CigarString() << endl;
-      continue;
+    if( nread % 1000000 == 0 ) cerr << nread/1000000 << " million reads processed" << endl;
+    int seq_length=b->core.l_qseq;
+    uint32_t *cigar = bam1_cigar(b);
+    int matched=0;
+    int rest=0;
+    for(int k=0; k < b->core.n_cigar; k++){
+      int c_oper=cigar[k]&BAM_CIGAR_MASK;;
+      int c_size=cigar[k]>>BAM_CIGAR_SHIFT;
+      if(c_oper==BAM_CMATCH)
+	matched+=c_size;
+      else
+	rest+=c_size;
     }
+    if((seq_length-matched)<FLANK_SIZE && rest < MIN_GAP) continue ;
     nread_processed++;
-    string seq=r.Sequence();
+    //get the read sequence
+    char qseq[seq_length];
+    uint8_t * s = bam1_seq(b);
+    for(int n=0; n<seq_length; n++){
+      char v = bam1_seqi(s,n);
+      qseq[n] = bam_nt16_rev_table[v];
+    }
+    string seq(qseq,seq_length);
     //loop through the sequence to find the first match
     if(get_match(seq)){ 
       f_count++;
       //also check the reverse compliment if the read is unmapped.
-    } else if (!r.MappedFlag())  {
+    } else if (matched==0)  {
+      unmapped++;
       reverse(seq.begin(),seq.end());
       transform(seq.begin(),seq.end(),seq.begin(),compliment);
       if(get_match(seq)){
@@ -248,15 +282,18 @@ int main(int argc, char *argv[]){
     }
     //find all matches
   }
-  bw.Close();
+  bam_destroy1(b);
+  samclose(in);
 
-  //  ProfilerStop();
+
+  ProfilerStop();
 
   cerr << "Reads Total=" << nread << endl;
   cerr << "Reads Processed=" << nread_processed << endl;
   cerr << "One match=" << n_first_match << endl;
   cerr << "Junction counts=" << f_count << "   " << r_count << endl;
   cerr << "Perfect matches=" << n_perfect_match << endl;
+  cerr << "Unmapped=" << unmapped << endl;
 
   //print out the table of counts
   counts.print_table();
