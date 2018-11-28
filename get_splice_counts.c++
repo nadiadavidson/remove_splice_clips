@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 #include <sstream>
-#include <string>
+#include <string_view>
 #include <algorithm>
 
 #include <sam.h>
@@ -88,7 +88,8 @@ public:
 } counts;
 
 class JunctionSeq { //read the fasta
-  unordered_map<string,string > junc_seq;
+  unordered_map<string_view,string > junc_seq;
+  unordered_map<string,string> _seqs;
 public:
   void read_fasta( string & flank_fasta,const string type){
     ifstream file;
@@ -97,7 +98,6 @@ public:
       cout << "Unable to open file " << flank_fasta << endl;
       exit(1);
     } //read the fasta files
-    unordered_map<string,string> sequences;
     string id="";
     string line;
     while ( getline (file,line) ){
@@ -106,18 +106,18 @@ public:
         int end=line.find_first_of("\t\n ")-1;
 	id=line.substr(start,end);
       } else {
-        sequences[id]=sequences[id]+line;
+        _seqs[id]=_seqs[id]+line;
       }
     }
     //loop through the sequences and sort into start and end flanking sequence
     //mark any duplicate sequences for later removal
-    vector<string> to_erase; //list of junction sequences that aren't unique.
-    unordered_map<string,string>::iterator seq_itr=sequences.begin();
-    for(; seq_itr!=sequences.end(); seq_itr++){
+    vector<string_view> to_erase; //list of junction sequences that aren't unique.
+    unordered_map<string,string>::iterator seq_itr=_seqs.begin();
+    for(; seq_itr!=_seqs.end(); seq_itr++){
       //if more than one junction with this sequence
       //will need to remove later.
       string id=seq_itr->first;
-      string seq=seq_itr->second;
+      string_view seq=seq_itr->second;
       int second_last_char=id.size()-type.size()-1;
       bool is_type = id.find(type,second_last_char)!=string::npos;
       bool right_size = seq.size()==FLANK_SIZE;
@@ -136,11 +136,12 @@ public:
     //now loop again and remove all the black listed junctions
     for(int i=0; i<to_erase.size(); i++)
       junc_seq.erase(to_erase.at(i));
+    cout << "Done reading fasta" << endl;
   };
-  inline unordered_map<string,string>::iterator find(string & key){
+  inline unordered_map<string_view,string>::iterator find(string_view & key){
     return junc_seq.find(key);
   };
-  inline unordered_map<string,string>::iterator end(){
+  inline unordered_map<string_view,string>::iterator end(){
     return junc_seq.end();
   };
   
@@ -149,13 +150,15 @@ public:
 static JunctionSeq junc_seq_start;
 static JunctionSeq junc_seq_end;
 
-unordered_map<string,string>::iterator 
-find_non_exact_match(string& kmer,JunctionSeq& junc_seq){
+unordered_map<string_view,string>::iterator 
+find_non_exact_match(string_view & orig_kmer,JunctionSeq& junc_seq){
+  string kmer(orig_kmer);
   for(int base=0; base < FLANK_SIZE ; base++){
     vector<string> nuc{"A","G","C","T"};
     for(int n=0; n< nuc.size(); n++){
       kmer.replace(base,1,nuc.at(n));
-      unordered_map<string,string>::iterator match=junc_seq.find(kmer);
+      string_view sv_kmer=kmer;
+      unordered_map<string_view,string>::iterator match=junc_seq.find(sv_kmer);
       if(match!=junc_seq.end())
 	return match;
     }
@@ -166,17 +169,18 @@ find_non_exact_match(string& kmer,JunctionSeq& junc_seq){
 //loop through the sequence to find a match
 bool get_match(string & seq){
   if(seq.size()<(2*FLANK_SIZE)) return false;
-  unordered_map<string,string>::iterator end; //end of exon1
-  unordered_map<string,string>::iterator start; //joins to start of exon2
-  string kmer1,kmer2;
+  unordered_map<string_view,string>::iterator end; //end of exon1
+  unordered_map<string_view,string>::iterator start; //joins to start of exon2
+  string_view sv_seq = seq;
+  string_view kmer1,kmer2;
   //search in the forward direction
   for(int pos=0; pos < (seq.size()-FLANK_SIZE) ; pos++){
-    kmer1=seq.substr(pos,FLANK_SIZE);
+    kmer1=sv_seq.substr(pos,FLANK_SIZE);
     end=junc_seq_end.find(kmer1);
     //if a match is found. look for other side of the junction
     if(end!=junc_seq_end.end()){
       n_first_match++;
-      string kmer2=seq.substr(pos+FLANK_SIZE,FLANK_SIZE);
+      kmer2=sv_seq.substr(pos+FLANK_SIZE,FLANK_SIZE);
       start=junc_seq_start.find(kmer2);
       //if other end is found
       if(start!=junc_seq_start.end()){
@@ -198,11 +202,11 @@ bool get_match(string & seq){
   if(ALLOW_MISMATCH){
     //check again in reverse, permutating the end bases:
     for(int pos=seq.size()-FLANK_SIZE-1; pos >= FLANK_SIZE ; pos--){
-      string kmer1=seq.substr(pos,FLANK_SIZE);
+      kmer1=sv_seq.substr(pos,FLANK_SIZE);
       start=junc_seq_start.find(kmer1);
       //if a match is found. look for other side of the junction
       if(start!=junc_seq_start.end()){
-	string kmer2=seq.substr(pos-FLANK_SIZE,FLANK_SIZE);
+	kmer2=sv_seq.substr(pos-FLANK_SIZE,FLANK_SIZE);
 	end=find_non_exact_match(kmer2,junc_seq_end);
 	if(end!=junc_seq_end.end()){
 	  counts.increment(end->second,start->second);
@@ -231,7 +235,8 @@ int main(int argc, char *argv[]){
 
   //Bam file reader
   samfile_t *in = 0 ;
-  if ((in = samopen(in_filename.c_str(), "br", NULL)) == 0 | in->header == 0) {
+  in = samopen(in_filename.c_str(), "br", NULL);
+  if ((in==0) | (in->header == 0)) {
     cerr << "fail to open "<< in_filename << " for reading." << endl;
     exit(1);
   }
