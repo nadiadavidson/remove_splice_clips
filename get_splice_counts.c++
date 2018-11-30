@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 #include <sstream>
-#include <string_view>
+#include <experimental/string_view>
 #include <algorithm>
 
 #include <sam.h>
@@ -16,6 +16,7 @@
 
 #include <gperftools/profiler.h>
 using namespace std;
+using namespace std::experimental;
 
 static const int FLANK_SIZE=30;
 static const bool ALLOW_MISMATCH=false;
@@ -256,7 +257,7 @@ int main(int argc, char *argv[]){
     int matched=0;
     int rest=0;
     for(int k=0; k < b->core.n_cigar; k++){
-      int c_oper=cigar[k]&BAM_CIGAR_MASK;;
+      int c_oper=cigar[k]&BAM_CIGAR_MASK;
       int c_size=cigar[k]>>BAM_CIGAR_SHIFT;
       if(c_oper==BAM_CMATCH)
 	matched+=c_size;
