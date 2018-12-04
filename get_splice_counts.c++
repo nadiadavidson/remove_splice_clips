@@ -10,6 +10,7 @@
 #include <sstream>
 #include <experimental/string_view>
 #include <algorithm>
+//#include <functional>
 
 #include <sam.h>
 #include <bam.h>
@@ -21,8 +22,8 @@ using namespace std::experimental;
 static const int FLANK_SIZE=30;
 static const bool ALLOW_MISMATCH=false;
 static const int MIN_GAP=200000;
-static const string END_LABEL="END";
-static const string START_LABEL="START";
+static const string END_LABEL=":END";
+static const string START_LABEL=":START";
 static const char EXON_ID_DELIM=':';
 static const int MIN_COUNTS=2;
 
@@ -60,17 +61,21 @@ static class Counts {
     //otherwise fill in the gene info
     vector<string> gene{gene_info.at(0),gene_info.at(4)};
     vector<string> chrom{gene_info.at(1),gene_info.at(5)};
-    vector<int>pos{atoi(gene_info.at(2).c_str()),atoi(gene_info.at(6).c_str())};
+    vector<int>pos{atoi(gene_info.at(2).c_str())+1, //add one to convert
+	atoi(gene_info.at(6).c_str())+1};           //bed to ucsc coordinates
     
     //now check if the junction looks interesting
     bool different_chrom = chrom[0]!=chrom[1];
     bool non_linear_order = pos[1] < pos[0];
     bool distal = ((pos[1]-pos[0])>MIN_GAP) & (gene[0]!=gene[1]);
     bool enough_support = read_support >= MIN_COUNTS;
+    string event_type ;
+    gene[0]==gene[1] ? event_type="BACK_SPLICE" : event_type="FUSION" ;
+
     if( (different_chrom | non_linear_order | distal ) & enough_support ){
       cout << gene[0] << "\t" << chrom[0] << "\t" << pos[0] << "\t" 
 	   << gene[1] << "\t" << chrom[1] << "\t" << pos[1] << "\t" 
-	   << read_support << endl;
+	   << read_support << "\t" << event_type << endl;
     }
   };
   
@@ -80,8 +85,15 @@ public:
     _counts[pair]++;
   };
   void print_table(){
-    unordered_map< string , int >::iterator counts_itr=_counts.begin();
-    for(;counts_itr!=_counts.end(); counts_itr++){
+    cerr << "Reporting counts..."<< endl;
+    //Sort the count table by counts (highest first)
+    //requires conversion to a vector
+    vector<pair<string,int>> count_vec(_counts.begin(),_counts.end());
+    sort(count_vec.begin(), count_vec.end(), [=](pair<string, int>& a, pair<string, int>& b){
+	return a.second > b.second;
+      });
+    vector< pair<string, int >>::iterator counts_itr=count_vec.begin();
+    for(;counts_itr!=count_vec.end(); counts_itr++){
       print_if_interesting_junction(counts_itr->first,counts_itr->second);
     }
   };
@@ -90,27 +102,9 @@ public:
 
 class JunctionSeq { //read the fasta
   unordered_map<string_view,string > junc_seq;
-  unordered_map<string,string> _seqs;
 public:
-  void read_fasta( string & flank_fasta,const string type){
-    ifstream file;
-    file.open(flank_fasta);
-    if(!(file.good())){
-      cout << "Unable to open file " << flank_fasta << endl;
-      exit(1);
-    } //read the fasta files
-    string id="";
-    string line;
-    while ( getline (file,line) ){
-      int start=line.find(">")+1;
-      if(start==1){ //if this is the ID line...
-        int end=line.find_first_of("\t\n ")-1;
-	id=line.substr(start,end);
-      } else {
-        _seqs[id]=_seqs[id]+line;
-      }
-    }
-    //loop through the sequences and sort into start and end flanking sequence
+  void read_fasta( unordered_map<string,string> & _seqs, const string type){
+    //loop through the sequences and sort into start or end flanking sequence
     //mark any duplicate sequences for later removal
     vector<string_view> to_erase; //list of junction sequences that aren't unique.
     unordered_map<string,string>::iterator seq_itr=_seqs.begin();
@@ -119,8 +113,7 @@ public:
       //will need to remove later.
       string id=seq_itr->first;
       string_view seq=seq_itr->second;
-      int second_last_char=id.size()-type.size()-1;
-      bool is_type = id.find(type,second_last_char)!=string::npos;
+      bool is_type = id.find(type)!=string::npos;
       bool right_size = seq.size()==FLANK_SIZE;
       if(is_type & right_size){
 	if(junc_seq.find(seq)!=junc_seq.end())
@@ -129,15 +122,16 @@ public:
       }
     }
     if(junc_seq.size()==0){
-      cerr << "Found no compatible sequences in "<< flank_fasta << endl;
+      cerr << "Found no compatible sequences in exon reference fasta file"<< endl;
       exit(1);
     }
     sort(to_erase.begin(),to_erase.end());
     to_erase.erase(unique(to_erase.begin(),to_erase.end()),to_erase.end());
     //now loop again and remove all the black listed junctions
+    cerr << "Removing " << to_erase.size() 
+	 << " exon edge sequences for being non-unique" << endl;
     for(int i=0; i<to_erase.size(); i++)
       junc_seq.erase(to_erase.at(i));
-    cout << "Done reading fasta" << endl;
   };
   inline unordered_map<string_view,string>::iterator find(string_view & key){
     return junc_seq.find(key);
@@ -145,7 +139,6 @@ public:
   inline unordered_map<string_view,string>::iterator end(){
     return junc_seq.end();
   };
-  
 };
 
 static JunctionSeq junc_seq_start;
@@ -228,13 +221,33 @@ int main(int argc, char *argv[]){
   std::string flank_fasta=argv[1];
   std::string in_filename=argv[2];
   
+  //Read the fasta reference file
   cerr << "Reading fasta file of junction sequences: " << flank_fasta << endl;
-  junc_seq_start.read_fasta(flank_fasta,START_LABEL);
-  junc_seq_end.read_fasta(flank_fasta,END_LABEL);
-
+  unordered_map<string,string> seqs;
+  ifstream file;
+  file.open(flank_fasta);
+  if(!(file.good())){ //check it opens
+    cout << "Unable to open file " << flank_fasta << endl;
+    exit(1);
+  } 
+  string id="";
+  string line;
+  while ( getline (file,line) ){
+    int start=line.find(">")+1;
+    if(start==1){ //if this is the ID line...
+        int end=line.find_first_of("\t\n ")-1;
+        id=line.substr(start,end);
+    } else {
+      seqs[id]=seqs[id]+line;
+    }
+  }
+  //pass to function for junction map creation
+  junc_seq_start.read_fasta(seqs,START_LABEL);
+  junc_seq_end.read_fasta(seqs,END_LABEL);
+  cerr << "Done reading fasta" << endl;
   ProfilerStart("prof.out");
 
-  //Bam file reader
+  //Read the bam file (using samtools API)
   samfile_t *in = 0 ;
   in = samopen(in_filename.c_str(), "br", NULL);
   if ((in==0) | (in->header == 0)) {
@@ -257,8 +270,8 @@ int main(int argc, char *argv[]){
     int matched=0;
     int rest=0;
     for(int k=0; k < b->core.n_cigar; k++){
-      int c_oper=cigar[k]&BAM_CIGAR_MASK;
-      int c_size=cigar[k]>>BAM_CIGAR_SHIFT;
+      int c_oper=(cigar[k])&BAM_CIGAR_MASK;
+      int c_size=(cigar[k])>>BAM_CIGAR_SHIFT;
       if(c_oper==BAM_CMATCH)
 	matched+=c_size;
       else
