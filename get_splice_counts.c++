@@ -6,6 +6,7 @@
 #include <iostream>
 #include <fstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <sstream>
 #include <experimental/string_view>
@@ -44,7 +45,8 @@ char compliment(char& c){
 
 static class Counts {
   unordered_map< string, int > _counts;
-  void print_if_interesting_junction(string name, int & read_support){
+  void print_if_interesting_junction(string name, int & read_support, 
+				     unordered_set<string> & black_list){
     //get positions and genes from the exon junction ids
     stringstream ss(name);    
     string field;
@@ -61,21 +63,24 @@ static class Counts {
     //otherwise fill in the gene info
     vector<string> gene{gene_info.at(0),gene_info.at(4)};
     vector<string> chrom{gene_info.at(1),gene_info.at(5)};
-    vector<int>pos{atoi(gene_info.at(2).c_str())+1, //add one to convert
-	atoi(gene_info.at(6).c_str())+1};           //bed to ucsc coordinates
+    vector<int>pos{atoi(gene_info.at(2).c_str()), 
+	atoi(gene_info.at(6).c_str())};        
     
     //now check if the junction looks interesting
     bool different_chrom = chrom[0]!=chrom[1];
     bool non_linear_order = pos[1] < pos[0];
     bool distal = ((pos[1]-pos[0])>MIN_GAP) & (gene[0]!=gene[1]);
     bool enough_support = read_support >= MIN_COUNTS;
+    stringstream junc_pos_formatted;
+    junc_pos_formatted << gene[0] << "\t" << chrom[0] << "\t" << pos[0] << "\t"
+		       << gene[1] << "\t" << chrom[1] << "\t" << pos[1] ;
+    bool not_in_black_list = black_list.find(junc_pos_formatted.str())==black_list.end();
+      
     string event_type ;
     gene[0]==gene[1] ? event_type="BACK_SPLICE" : event_type="FUSION" ;
 
-    if( (different_chrom | non_linear_order | distal ) & enough_support ){
-      cout << gene[0] << "\t" << chrom[0] << "\t" << pos[0] << "\t" 
-	   << gene[1] << "\t" << chrom[1] << "\t" << pos[1] << "\t" 
-	   << read_support << "\t" << event_type << endl;
+    if( (different_chrom | non_linear_order | distal ) & enough_support & not_in_black_list){
+      cout << junc_pos_formatted << "\t" << read_support << "\t" << event_type << endl;
     }
   };
   
@@ -84,7 +89,7 @@ public:
     string pair = end + EXON_ID_DELIM + start;
     _counts[pair]++;
   };
-  void print_table(){
+  void print_table(unordered_set<string> & black_list){
     cerr << "Reporting counts..."<< endl;
     //Sort the count table by counts (highest first)
     //requires conversion to a vector
@@ -94,7 +99,8 @@ public:
       });
     vector< pair<string, int >>::iterator counts_itr=count_vec.begin();
     for(;counts_itr!=count_vec.end(); counts_itr++){
-      print_if_interesting_junction(counts_itr->first,counts_itr->second);
+      //if the event is not in the black list check if it's interesting..
+      print_if_interesting_junction(counts_itr->first,counts_itr->second,black_list);
     }
   };
 
@@ -214,12 +220,25 @@ bool get_match(string & seq){
 
 int main(int argc, char *argv[]){
 
-  if(argc!=3){
-    cerr << "Usage: get_non_linear_region <exon_flanking_seq.fasta> <in.bam>" << endl;
+  if(argc<3 | argc>4){
+    cerr << "Usage: get_non_linear_region <exon_flanking_seq.fasta> <in.bam> [black_list]" << endl;
     exit(1);
   }
-  std::string flank_fasta=argv[1];
-  std::string in_filename=argv[2];
+  string flank_fasta=argv[1];
+  string in_filename=argv[2];
+  unordered_set<string> black_list;
+  if(argc==4){ // read the black list
+    ifstream black_list_stream;
+    black_list_stream.open(argv[3]);
+    if(!(black_list_stream.good())){ //check it opens
+      cout << "Unable to open file " << argv[3] << endl;
+      exit(1);
+    }
+    string line;
+    while(getline (black_list_stream,line)){
+      black_list.insert(line);
+    }
+  }
   
   //Read the fasta reference file
   cerr << "Reading fasta file of junction sequences: " << flank_fasta << endl;
@@ -315,6 +334,6 @@ int main(int argc, char *argv[]){
   cerr << "Unmapped=" << unmapped << endl;
 
   //print out the table of counts
-  counts.print_table();
+  counts.print_table(black_list);
 
 }
