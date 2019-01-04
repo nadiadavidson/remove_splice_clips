@@ -42,6 +42,52 @@ char compliment(char& c){
   }
 }
 
+class BamReader{
+  samfile_t * in;
+  bam1_t *b;
+  bam_index_t *idx; 
+
+public:
+  ~BamReader(){
+    bam_destroy1(b);
+    samclose(in);
+    bam_index_destroy(idx);
+  }
+
+  void setFile(string filename){
+    in = 0 ;
+    in = samopen(filename.c_str(), "br", NULL);
+    if ((in==0) | (in->header == 0)) {
+      cerr << "failed to open "<< filename << " for reading." << endl;
+      exit(1);
+    }
+    //load the index
+    idx = 0;
+    idx = bam_index_load(filename.c_str());
+    if(idx==0){
+      cerr << "failed find index file for "<< filename << endl;
+      exit(1);
+    }
+    b = bam_init1();
+  }
+
+  static int count_func(const bam1_t *b, void *data)
+  {  
+    int * read_counter = (int*)data;
+    (*read_counter)+=1;
+    return 0;  
+  }    
+  int get_coverage(string chrom, int pos){
+    //have to do this formatting hack to get the chromosome index.
+    stringstream formatted_pos;
+    formatted_pos << chrom << ":" << pos << "-" << pos;
+    int chrom_id, begin, end;
+    bam_parse_region(in->header,formatted_pos.str().c_str(),&chrom_id,&begin,&end);
+    int result=0;
+    bam_fetch(in->x.bam,idx,chrom_id,begin,end,(void*)&result,count_func);
+    return result;
+  }
+} bam_reader ;
 
 static class Counts {
   unordered_map< string, int > _counts;
@@ -80,7 +126,10 @@ static class Counts {
     gene[0]==gene[1] ? event_type="BACK_SPLICE" : event_type="FUSION" ;
 
     if( (different_chrom | non_linear_order | distal ) & enough_support & not_in_black_list){
-      cout << junc_pos_formatted << "\t" << read_support << "\t" << event_type << endl;
+      cout << junc_pos_formatted.str() << "\t" << read_support << "\t" 
+	   << "\t" << bam_reader.get_coverage(chrom[0],pos[0]) 
+	   << "\t" << bam_reader.get_coverage(chrom[1],pos[1])
+	   << "\t" << event_type << endl;
     }
   };
   
@@ -334,6 +383,7 @@ int main(int argc, char *argv[]){
   cerr << "Unmapped=" << unmapped << endl;
 
   //print out the table of counts
+  bam_reader.setFile(in_filename);
   counts.print_table(black_list);
 
 }
